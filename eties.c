@@ -63,6 +63,8 @@ eties_event_handler(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 	s->running_sum += m->val; //adheres to associative property - should be deterministic on event ties
 
 	//if the event to be created is less than the end time, proceed - otherwise stop generating new events
+	//This is generally fine but if we are testing the tiebreaker RNG rollback count, then new'ing an event
+	//that is never actually sent or processed will cause discrepancies.
 	if (tw_now(lp)+1 < g_tw_ts_end) {
 		bf->c1 = 1;
 		tw_lpid	 dest = tw_rand_integer(lp->rng, 0, ttl_lps -1);
