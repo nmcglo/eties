@@ -27,7 +27,7 @@ eties_init(eties_state * s, tw_lp * lp)
 
 		tw_event *e = tw_event_new(dest, 1, lp);	
 		eties_message *new_m = tw_event_data(e);
-		new_m->val = tw_rand_unif(&lp->rng[1]) * 100.0;
+		new_m->val = tw_rand_unif(lp->rng) * 100.0;
 		tw_event_send(e);
 	}
 
@@ -72,7 +72,7 @@ eties_event_handler(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 
 		tw_event *e = tw_event_new(dest, 1, lp);	
 		eties_message *new_m = tw_event_data(e);
-		new_m->val = tw_rand_unif(&lp->rng[1]) * 100.0;
+		new_m->val = tw_rand_unif(lp->rng) * 100.0;
 		tw_event_send(e);
 	}
 }
@@ -81,7 +81,7 @@ void
 eties_event_handler_rc(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 {
 	if (bf->c1) {
-		tw_rand_reverse_unif(&lp->rng[1]); //new mean number
+		tw_rand_reverse_unif(lp->rng); //new mean number
 		tw_rand_reverse_unif(lp->rng); //dest
 	}
 	
