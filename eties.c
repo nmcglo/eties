@@ -25,9 +25,10 @@ eties_init(eties_state * s, tw_lp * lp)
 		if(dest >= (g_tw_nlp * tw_nnodes()))
 			tw_error(TW_LOC, "bad dest");
 
-		tw_event *e = tw_event_new(dest, 1, lp);	
+		tw_event *e = tw_event_new(dest, timestep_increment, lp);	
 		eties_message *new_m = tw_event_data(e);
 		new_m->val = tw_rand_unif(lp->rng) * 100.0;
+		new_m->chain_identifier = 1;
 		tw_event_send(e);
 	}
 
@@ -62,6 +63,13 @@ eties_event_handler(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 	s->cur_rec_mean = new_mean;
 	s->running_sum += m->val; //adheres to associative property - should be deterministic on event ties
 
+	//If we have a set number of events to be generated per start event, AND
+	//if we've already generated enough causal events eminating from this event, then don't generate another event
+	if(g_eties_events_per_start > 0 && m->chain_identifier >= g_eties_events_per_start) {
+		bf->c2 = 1;
+		return;
+	}
+
 	//if the event to be created is less than the end time, proceed - otherwise stop generating new events
 	//This is generally fine but if we are testing the tiebreaker RNG rollback count, then new'ing an event
 	//that is never actually sent or processed will cause discrepancies.
@@ -72,9 +80,10 @@ eties_event_handler(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 		if(dest >= (g_tw_nlp * tw_nnodes()))
 			tw_error(TW_LOC, "bad dest");
 
-		tw_event *e = tw_event_new(dest, 1, lp);	
+		tw_event *e = tw_event_new(dest, timestep_increment, lp);	
 		eties_message *new_m = tw_event_data(e);
 		new_m->val = tw_rand_unif(lp->rng) * 100.0;
+		new_m->chain_identifier = m->chain_identifier + 1;
 		tw_event_send(e);
 	}
 }
@@ -82,13 +91,17 @@ eties_event_handler(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 void
 eties_event_handler_rc(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 {
+	s->cur_rec_mean = m->rc_saved_mean; //Saved state is safer when dealing with floats
+	s->running_sum -=m->val; //The running sum is meant to be a verification. Still working with floats but not looking with enough precision to matter
+
 	if (bf->c1) {
 		tw_rand_reverse_unif(lp->rng); //new mean number
 		tw_rand_reverse_unif(lp->rng); //dest
 	}
-	
-	s->cur_rec_mean = m->rc_saved_mean; //Saved state is safer when dealing with floats
-	s->running_sum -=m->val; //The running sum is meant to be a verification. Still working with floats but not looking with enough precision to matter
+
+	if (bf->c2) {
+		return;
+	}
 }
 
 void eties_commit(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
@@ -163,7 +176,9 @@ const tw_optdef app_opt[] =
 	TWOPT_UINT("nlp", nlp_per_pe, "number of LPs per processor"),
 	TWOPT_DOUBLE("mult", mult, "multiplier for event memory allocation"),
 	TWOPT_DOUBLE("lookahead", lookahead, "lookahead for events"),
+	TWOPT_UINT("timestep-increment", timestep_increment, "timestamp offset between causal and resulting events"),
 	TWOPT_UINT("start-events", g_eties_start_events, "number of initial messages per LP"),
+	TWOPT_UINT("chain-length", g_eties_events_per_start, "total number of messages generated per start event"),
 	TWOPT_UINT("memory", optimistic_memory, "additional memory buffers"),
 	TWOPT_CHAR("run", run_id, "user supplied run name"),
 	TWOPT_END()
