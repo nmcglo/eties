@@ -17,10 +17,12 @@ eties_init(eties_state * s, tw_lp * lp)
 	s->cur_rec_mean = tw_rand_unif(lp->rng)*100.0; //give it a random starting value
 	s->running_sum = s->cur_rec_mean;
 
-	printf("LP %ld: Starting Mean: %.10f\n",lp->gid, s->cur_rec_mean);
+	if (lp->gid < 100)
+		printf("LP %ld: Starting Mean: %.10f\n",lp->gid, s->cur_rec_mean);
 
 	for(int i = 0; i < g_eties_start_events; i++) {
-		tw_lpid	 dest = tw_rand_integer(lp->rng, 0, ttl_lps -1);
+		// tw_lpid	 dest = tw_rand_integer(lp->rng, 0, ttl_lps -1);
+		tw_lpid dest = lp->gid;
 
 		if(dest >= (g_tw_nlp * tw_nnodes()))
 			tw_error(TW_LOC, "bad dest");
@@ -75,7 +77,22 @@ eties_event_handler(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 	//that is never actually sent or processed will cause discrepancies.
 	if (tw_now(lp)+1 < g_tw_ts_end) {
 		bf->c1 = 1;
-		tw_lpid	 dest = tw_rand_integer(lp->rng, 0, ttl_lps -1);
+		tw_lpid	dest;
+
+		if(tw_rand_unif(lp->rng) <= percent_remote)
+		{
+			bf->c3 = 1;
+			dest = tw_rand_integer(lp->rng, 0, ttl_lps - 1);
+			// Makes PHOLD non-deterministic across processors! Don't uncomment
+			/* dest += offset_lpid; */
+			/* if(dest >= ttl_lps) */
+			/* 	dest -= ttl_lps; */
+		} else
+		{
+			bf->c3 = 0;
+			dest = lp->gid;
+		}
+
 
 		if(dest >= (g_tw_nlp * tw_nnodes()))
 			tw_error(TW_LOC, "bad dest");
@@ -96,7 +113,8 @@ eties_event_handler_rc(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * l
 
 	if (bf->c1) {
 		tw_rand_reverse_unif(lp->rng); //new mean number
-		tw_rand_reverse_unif(lp->rng); //dest
+		if (bf->c3)
+			tw_rand_reverse_unif(lp->rng); //dest
 	}
 
 	if (bf->c2) {
@@ -116,7 +134,8 @@ void
 eties_finish(eties_state * s, tw_lp * lp)
 {
 	//If the running mean and the runnng sum are both consistent between separate runs, the model is deterministic
-	printf("LP %ld:  Final Running Mean %.10f    Running Sum %.3f\n",lp->gid, s->cur_rec_mean, s->running_sum);
+	if (lp->gid < 100)
+		printf("LP %ld:  Final Running Mean %.10f    Running Sum %.3f\n",lp->gid, s->cur_rec_mean, s->running_sum);
 
 	//Verify the core tiebreaking RNG - in optimistic debug, this value should equal that of post-init
 #ifdef USE_RAND_TIEBREAKER
@@ -173,6 +192,7 @@ st_model_types model_types[] = {
 const tw_optdef app_opt[] =
 {
 	TWOPT_GROUP("eties Model"),
+	TWOPT_DOUBLE("remote", percent_remote, "desired remote event rate"),
 	TWOPT_UINT("nlp", nlp_per_pe, "number of LPs per processor"),
 	TWOPT_DOUBLE("mult", mult, "multiplier for event memory allocation"),
 	TWOPT_DOUBLE("lookahead", lookahead, "lookahead for events"),
