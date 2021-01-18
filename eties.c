@@ -79,20 +79,27 @@ eties_event_handler(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 		bf->c1 = 1;
 		tw_lpid	dest;
 
-		if(tw_rand_unif(lp->rng) <= percent_remote)
+		if (tw_rand_unif(lp->rng) <= percent_incast)
 		{
-			bf->c3 = 1;
-			dest = tw_rand_integer(lp->rng, 0, ttl_lps - 1);
-			// Makes PHOLD non-deterministic across processors! Don't uncomment
-			/* dest += offset_lpid; */
-			/* if(dest >= ttl_lps) */
-			/* 	dest -= ttl_lps; */
-		} else
-		{
-			bf->c3 = 0;
-			dest = lp->gid;
+			dest = 0;
 		}
-
+		else
+		{
+			bf->c4 = 1;
+			if (tw_rand_unif(lp->rng) <= percent_remote)
+			{
+				bf->c3 = 1;
+				dest = tw_rand_integer(lp->rng, 0, ttl_lps - 1);
+				// Makes PHOLD non-deterministic across processors! Don't uncomment
+				/* dest += offset_lpid; */
+				/* if(dest >= ttl_lps) */
+				/* 	dest -= ttl_lps; */
+			} else
+			{
+				bf->c3 = 0;
+				dest = lp->gid;
+			}
+		}
 
 		if(dest >= (g_tw_nlp * tw_nnodes()))
 			tw_error(TW_LOC, "bad dest");
@@ -113,8 +120,12 @@ eties_event_handler_rc(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * l
 
 	if (bf->c1) {
 		tw_rand_reverse_unif(lp->rng); //new mean number
-		if (bf->c3)
-			tw_rand_reverse_unif(lp->rng); //dest
+		tw_rand_reverse_unif(lp->rng); //incast coin flip
+		if (bf->c4) {
+			tw_rand_reverse_unif(lp->rng); // remote coin flip
+			if (bf->c3)
+				tw_rand_reverse_unif(lp->rng); //dest
+		}
 	}
 
 	if (bf->c2) {
@@ -192,6 +203,7 @@ st_model_types model_types[] = {
 const tw_optdef app_opt[] =
 {
 	TWOPT_GROUP("eties Model"),
+	TWOPT_DOUBLE("incast", percent_incast, "probability that an event will be incasted to LP0"),
 	TWOPT_DOUBLE("remote", percent_remote, "desired remote event rate"),
 	TWOPT_UINT("nlp", nlp_per_pe, "number of LPs per processor"),
 	TWOPT_DOUBLE("mult", mult, "multiplier for event memory allocation"),

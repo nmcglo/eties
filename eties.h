@@ -28,6 +28,7 @@ struct eties_message
 */
 tw_stime lookahead = 1.0;
 static tw_stime mult = 1.4;
+static tw_stime percent_incast = 0.01;
 static tw_stime percent_remote = 0.25;
 static unsigned int ttl_lps = 0;
 static unsigned int nlp_per_pe = 8;
