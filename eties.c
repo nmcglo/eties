@@ -4,6 +4,8 @@
 
 unsigned int nlp_in_other_pes;
 
+int* incast_times;
+
 tw_peid
 eties_map(tw_lpid gid)
 {
@@ -15,7 +17,9 @@ eties_init(eties_state * s, tw_lp * lp)
 {
     (void*)lp;
 	s->cur_rec_mean = tw_rand_unif(lp->rng)*100.0; //give it a random starting value
-	s->running_sum = s->cur_rec_mean;
+	s->running_sum = (int) s->cur_rec_mean;
+	s->next_incast_time = incast_times[0];
+	s->incasts_completed = 0;
 
 	if (lp->gid < 100)
 		printf("LP %ld: Starting Mean: %.10f\n",lp->gid, s->cur_rec_mean);
@@ -29,7 +33,7 @@ eties_init(eties_state * s, tw_lp * lp)
 
 		tw_event *e = tw_event_new(dest, timestep_increment, lp);	
 		eties_message *new_m = tw_event_data(e);
-		new_m->val = tw_rand_unif(lp->rng) * 100.0;
+		new_m->val = (int) (tw_rand_unif(lp->rng) * 100.0);
 		new_m->chain_identifier = 1;
 		tw_event_send(e);
 	}
@@ -68,7 +72,7 @@ eties_event_handler(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 	//If we have a set number of events to be generated per start event, AND
 	//if we've already generated enough causal events eminating from this event, then don't generate another event
 	if(g_eties_events_per_start > 0 && m->chain_identifier >= g_eties_events_per_start) {
-		bf->c2 = 1;
+		bf->c10 = 1;
 		return;
 	}
 
@@ -76,37 +80,74 @@ eties_event_handler(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 	//This is generally fine but if we are testing the tiebreaker RNG rollback count, then new'ing an event
 	//that is never actually sent or processed will cause discrepancies.
 	if (tw_now(lp)+1 < g_tw_ts_end) {
-		bf->c1 = 1;
 		tw_lpid	dest;
+		bf->c1 = 1;
 
-		if (tw_rand_unif(lp->rng) <= percent_incast)
-		{
+		int now = tw_now(lp);
+		if (now+1 == s->next_incast_time) {
+			bf->c2 = 1;
 			dest = 0;
+			s->incasts_completed += 1;
+			s->next_incast_time = incast_times[s->incasts_completed];
 		}
-		else
-		{
-			bf->c4 = 1;
-			if (tw_rand_unif(lp->rng) <= percent_remote)
-			{
-				bf->c3 = 1;
-				dest = tw_rand_integer(lp->rng, 0, ttl_lps - 1);
-				// Makes PHOLD non-deterministic across processors! Don't uncomment
-				/* dest += offset_lpid; */
-				/* if(dest >= ttl_lps) */
-				/* 	dest -= ttl_lps; */
-			} else
-			{
-				bf->c3 = 0;
+		else {
+			bf->c3 = 1;
+			if (tw_rand_unif(lp->rng) <= percent_remote) {
+				bf->c4 = 1;
+				if (tw_rand_unif(lp->rng) <= percent_override)
+					dest = (lp->gid + (int)s->cur_rec_mean)%ttl_lps;
+				else {
+					bf->c5 = 1;
+					dest = tw_rand_integer(lp->rng, 0, ttl_lps - 1);
+				}
+			}
+			else {
 				dest = lp->gid;
 			}
 		}
+
+		// int normal_dest = 1;
+		// if (percent_override > 0) {
+		// 	bf->c6 = 1;
+		//  	if (tw_rand_unif(lp->rng) <= percent_override) {
+		// 		dest = (lp->gid + (int)s->cur_rec_mean)%ttl_lps;
+		// 		normal_dest = 0;
+		// 	}
+		// }		
+		// if (normal_dest) 		
+		// {
+		// 	bf->c3 = 1;
+		// 	int now = tw_now(lp);
+		// 	if(now+1 == s->next_incast_time)
+		// 	{
+		// 		bf->c4 = 1;
+		// 		dest = 0;
+		// 		s->incasts_completed += 1;
+		// 		s->next_incast_time = incast_times[s->incasts_completed];
+		// 	}
+		// 	else
+		// 	{
+		// 		if (tw_rand_unif(lp->rng) <= percent_remote)
+		// 		{
+		// 			bf->c3 = 1;
+		// 			dest = tw_rand_integer(lp->rng, 0, ttl_lps - 1);
+		// 			// Makes PHOLD non-deterministic across processors! Don't uncomment
+		// 			/* dest += offset_lpid; */
+		// 			/* if(dest >= ttl_lps) */
+		// 			/* 	dest -= ttl_lps; */
+		// 		} else
+		// 		{
+		// 			dest = lp->gid;
+		// 		}
+		// 	}
+		// }
 
 		if(dest >= (g_tw_nlp * tw_nnodes()))
 			tw_error(TW_LOC, "bad dest");
 
 		tw_event *e = tw_event_new(dest, timestep_increment, lp);	
 		eties_message *new_m = tw_event_data(e);
-		new_m->val = tw_rand_unif(lp->rng) * 100.0;
+		new_m->val = (int) (tw_rand_unif(lp->rng) * 100.0);
 		new_m->chain_identifier = m->chain_identifier + 1;
 		tw_event_send(e);
 	}
@@ -118,18 +159,23 @@ eties_event_handler_rc(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * l
 	s->cur_rec_mean = m->rc_saved_mean; //Saved state is safer when dealing with floats
 	s->running_sum -=m->val; //The running sum is meant to be a verification. Still working with floats but not looking with enough precision to matter
 
-	if (bf->c1) {
-		tw_rand_reverse_unif(lp->rng); //new mean number
-		tw_rand_reverse_unif(lp->rng); //incast coin flip
-		if (bf->c4) {
-			tw_rand_reverse_unif(lp->rng); // remote coin flip
-			if (bf->c3)
-				tw_rand_reverse_unif(lp->rng); //dest
-		}
+	if (bf->c10) {
+		return;
 	}
 
+	if (bf->c1) {
+		tw_rand_reverse_unif(lp->rng); //new val
+	}
 	if (bf->c2) {
-		return;
+		s->incasts_completed -= 1;
+		s->next_incast_time = incast_times[s->incasts_completed];
+	}
+	if (bf->c3) {
+		tw_rand_reverse_unif(lp->rng); //remote coin flip
+		if (bf->c4)
+			tw_rand_reverse_unif(lp->rng); //override coin flip
+		if (bf->c5)
+			tw_rand_reverse_unif(lp->rng); //random remote dest
 	}
 }
 
@@ -146,7 +192,7 @@ eties_finish(eties_state * s, tw_lp * lp)
 {
 	//If the running mean and the runnng sum are both consistent between separate runs, the model is deterministic
 	if (lp->gid < 100)
-		printf("LP %ld:  Final Running Mean %.10f    Running Sum %.3f\n",lp->gid, s->cur_rec_mean, s->running_sum);
+		printf("LP %ld:  Final Running Mean %.10f    Running Sum %d\n",lp->gid, s->cur_rec_mean, s->running_sum);
 
 	//Verify the core tiebreaking RNG - in optimistic debug, this value should equal that of post-init
 #ifdef USE_RAND_TIEBREAKER
@@ -203,7 +249,8 @@ st_model_types model_types[] = {
 const tw_optdef app_opt[] =
 {
 	TWOPT_GROUP("eties Model"),
-	TWOPT_DOUBLE("incast", percent_incast, "probability that an event will be incasted to LP0"),
+	TWOPT_DOUBLE("override", percent_override, "whether or not we override destination based on cur value"),
+	TWOPT_UINT("incast", num_incast, "number of planned incasts"),
 	TWOPT_DOUBLE("remote", percent_remote, "desired remote event rate"),
 	TWOPT_UINT("nlp", nlp_per_pe, "number of LPs per processor"),
 	TWOPT_DOUBLE("mult", mult, "multiplier for event memory allocation"),
@@ -257,6 +304,17 @@ main(int argc, char **argv)
 	g_tw_lookahead = lookahead;
 
 	nlp_in_other_pes = (tw_nnodes()-1) * nlp_per_pe;
+
+	
+	incast_times = (tw_stime*)calloc(num_incast, sizeof(tw_stime));
+	tw_stime gap = g_tw_ts_end/(num_incast+1);
+	printf("incast times: ");
+	for(int i = 1; i <= num_incast; i++)
+	{
+		incast_times[i-1] = (int)(gap*i);
+		printf("%d ", incast_times[i-1]);
+	}
+	printf("\n");
 
 	tw_define_lps(nlp_per_pe, sizeof(eties_message));
 

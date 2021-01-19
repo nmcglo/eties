@@ -13,13 +13,15 @@ typedef struct eties_message eties_message;
 struct eties_state
 {
     double cur_rec_mean;
-	double running_sum;
+	unsigned long long running_sum;
+	unsigned int next_incast_time;
+	unsigned int incasts_completed;
 };
 
 struct eties_message
 {
 	int chain_identifier; //how many events, including the start event, have been created by the start event
-	double val;
+	int val;
 	double rc_saved_mean;
 };
 
@@ -28,7 +30,8 @@ struct eties_message
 */
 tw_stime lookahead = 1.0;
 static tw_stime mult = 1.4;
-static tw_stime percent_incast = 0.01;
+static tw_stime percent_override = 0;
+static unsigned int num_incast = 0;
 static tw_stime percent_remote = 0.25;
 static unsigned int ttl_lps = 0;
 static unsigned int nlp_per_pe = 8;
