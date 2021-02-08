@@ -31,11 +31,12 @@ eties_init(eties_state * s, tw_lp * lp)
 		if(dest >= (g_tw_nlp * tw_nnodes()))
 			tw_error(TW_LOC, "bad dest");
 
-		tw_event *e = tw_event_new(dest, timestep_increment, lp);	
+		tw_event *e = tw_event_new(dest, 0, lp);	
 		eties_message *new_m = tw_event_data(e);
 		new_m->val = (int) (tw_rand_unif(lp->rng) * 100.0);
 		new_m->chain_identifier = 1;
 		tw_event_send(e);
+		// printf("%d: Scheduling event %d:%d for (%.4f,%.4f)\n",lp->gid, lp->pe->id, e->event_id, e->sig.recv_ts, e->sig.event_tiebreaker);
 	}
 
 //This feature of the model for debugging the tiebreaker uses lp->core_rng which doesn't exist in mainline ross at time of dev
@@ -71,20 +72,25 @@ eties_event_handler(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 
 	//If we have a set number of events to be generated per start event, AND
 	//if we've already generated enough causal events eminating from this event, then don't generate another event
+
+	tw_stime offset;
 	if(g_eties_events_per_start > 0 && m->chain_identifier >= g_eties_events_per_start) {
 		bf->c10 = 1;
-		return;
+		offset = 1;
+		m->chain_identifier = 0;
 	}
-
+	else {
+		offset = timestep_increment;
+	}
+	// printf("offset = %.4f\n",offset);
 	//if the event to be created is less than the end time, proceed - otherwise stop generating new events
 	//This is generally fine but if we are testing the tiebreaker RNG rollback count, then new'ing an event
 	//that is never actually sent or processed will cause discrepancies.
-	if (tw_now(lp)+1 < g_tw_ts_end) {
+	if (tw_now(lp)+offset < g_tw_ts_end) {
 		tw_lpid	dest;
-		bf->c1 = 1;
 
 		int now = tw_now(lp);
-		if (now+1 == s->next_incast_time) {
+		if (num_incast > 0 && now+1 == s->next_incast_time) {
 			bf->c2 = 1;
 			dest = 0;
 			s->incasts_completed += 1;
@@ -105,6 +111,8 @@ eties_event_handler(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 				dest = lp->gid;
 			}
 		}
+
+		// dest = (lp->gid +1)%ttl_lps;
 
 		// int normal_dest = 1;
 		// if (percent_override > 0) {
@@ -145,22 +153,28 @@ eties_event_handler(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 		if(dest >= (g_tw_nlp * tw_nnodes()))
 			tw_error(TW_LOC, "bad dest");
 
-		tw_event *e = tw_event_new(dest, timestep_increment, lp);	
+		tw_event *e = tw_event_new(dest, offset, lp);
 		eties_message *new_m = tw_event_data(e);
+		bf->c1 = 1;
 		new_m->val = (int) (tw_rand_unif(lp->rng) * 100.0);
 		new_m->chain_identifier = m->chain_identifier + 1;
 		tw_event_send(e);
+		// printf("%d: Scheduling event %d:%d for (%.4f,%.4f)\n",lp->gid, lp->pe->id, e->event_id, e->sig.recv_ts, e->sig.event_tiebreaker);
+		// sleep(1);
 	}
+	
 }
 
 void
 eties_event_handler_rc(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 {
+	// printf("%d: reverse! (%.4f, %.4f)\n",lp->gid, tw_now_sig(lp).recv_ts, tw_now_sig(lp).event_tiebreaker );
 	s->cur_rec_mean = m->rc_saved_mean; //Saved state is safer when dealing with floats
 	s->running_sum -=m->val; //The running sum is meant to be a verification. Still working with floats but not looking with enough precision to matter
 
 	if (bf->c10) {
-		return;
+		m->chain_identifier = g_eties_events_per_start;
+		// return;
 	}
 
 	if (bf->c1) {
@@ -192,7 +206,7 @@ eties_finish(eties_state * s, tw_lp * lp)
 {
 	//If the running mean and the runnng sum are both consistent between separate runs, the model is deterministic
 	if (lp->gid < 100)
-		printf("LP %ld:  Final Running Mean %.10f    Running Sum %d\n",lp->gid, s->cur_rec_mean, s->running_sum);
+		printf("LP %ld:  Final Running Mean %.10f    Running Sum %lld\n",lp->gid, s->cur_rec_mean, s->running_sum);
 
 	//Verify the core tiebreaking RNG - in optimistic debug, this value should equal that of post-init
 #ifdef USE_RAND_TIEBREAKER
@@ -306,7 +320,7 @@ main(int argc, char **argv)
 	nlp_in_other_pes = (tw_nnodes()-1) * nlp_per_pe;
 
 	
-	incast_times = (tw_stime*)calloc(num_incast, sizeof(tw_stime));
+	incast_times = (int*)calloc(num_incast, sizeof(int));
 	tw_stime gap = g_tw_ts_end/(num_incast+1);
 	printf("incast times: ");
 	for(int i = 1; i <= num_incast; i++)

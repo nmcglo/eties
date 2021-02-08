@@ -37,7 +37,7 @@ static unsigned int ttl_lps = 0;
 static unsigned int nlp_per_pe = 8;
 static int timestep_increment = 1;
 static int g_eties_start_events = 1;
-static int g_eties_events_per_start = 0; //how many events are allowed to be created per start event?
+static int g_eties_events_per_start = 1; //how many events are allowed to be created per start event?
 static int optimistic_memory = 100;
 
 // rate for timestamp exponential distribution
