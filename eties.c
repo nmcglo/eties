@@ -20,6 +20,7 @@ eties_init(eties_state * s, tw_lp * lp)
 	s->running_sum = (int) s->cur_rec_mean;
 	s->next_incast_time = incast_times[0];
 	s->incasts_completed = 0;
+	s->received_triggers = 0;
 
 	if (lp->gid < 100)
 		printf("LP %ld: Starting Mean: %.10f\n",lp->gid, s->cur_rec_mean);
@@ -56,7 +57,7 @@ eties_event_handler(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 {
     (void) s;
     (void) m;
-
+	m->num_rngs = 0;
 	//process the new mean destructively for current LP state
 
 	//this operation is order dependent - so event ordering really matters
@@ -83,33 +84,34 @@ eties_event_handler(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 		offset = timestep_increment;
 	}
 	// printf("offset = %.4f\n",offset);
+
+	//we only want to trigger g_eties_start_events number of children for regular offset events
+	if (m->offset == 1)
+	{
+		bf->c11;
+		s->received_triggers++;
+		if (s->received_triggers == g_eties_start_events) {
+			bf->c12 = 1;
+			s->received_triggers = 0;
+			return;
+		}
+	}
+	
+
+
 	//if the event to be created is less than the end time, proceed - otherwise stop generating new events
 	//This is generally fine but if we are testing the tiebreaker RNG rollback count, then new'ing an event
 	//that is never actually sent or processed will cause discrepancies.
 	if (tw_now(lp)+offset < g_tw_ts_end) {
 		tw_lpid	dest;
-
+		int do_incast = 0;
 		int now = tw_now(lp);
-		if (num_incast > 0 && now+1 == s->next_incast_time) {
+		if (num_incast > 0 && now+offset == s->next_incast_time) {
 			bf->c2 = 1;
 			dest = 0;
+			do_incast = 1;
 			s->incasts_completed += 1;
 			s->next_incast_time = incast_times[s->incasts_completed];
-		}
-		else {
-			bf->c3 = 1;
-			if (tw_rand_unif(lp->rng) <= percent_remote) {
-				bf->c4 = 1;
-				if (tw_rand_unif(lp->rng) <= percent_override)
-					dest = (lp->gid + (int)s->cur_rec_mean)%ttl_lps;
-				else {
-					bf->c5 = 1;
-					dest = tw_rand_integer(lp->rng, 0, ttl_lps - 1);
-				}
-			}
-			else {
-				dest = lp->gid;
-			}
 		}
 
 		// dest = (lp->gid +1)%ttl_lps;
@@ -150,15 +152,43 @@ eties_event_handler(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 		// 	}
 		// }
 
-		if(dest >= (g_tw_nlp * tw_nnodes()))
-			tw_error(TW_LOC, "bad dest");
+		int num_child_events = 1;
+		if (offset == 0)
+			num_child_events = g_eties_child_events;
 
-		tw_event *e = tw_event_new(dest, offset, lp);
-		eties_message *new_m = tw_event_data(e);
-		bf->c1 = 1;
-		new_m->val = (int) (tw_rand_unif(lp->rng) * 100.0);
-		new_m->chain_identifier = m->chain_identifier + 1;
-		tw_event_send(e);
+		for(int i = 0; i <  num_child_events; i++)
+		{
+			bf->c3 = 1;
+			m->num_rngs++;
+			if (tw_rand_unif(lp->rng) <= percent_remote) {
+				bf->c4 = 1;
+				m->num_rngs++;
+				if (tw_rand_unif(lp->rng) <= percent_override)
+					dest = (lp->gid + (int)s->cur_rec_mean)%ttl_lps;
+				else {
+					bf->c5 = 1;
+					dest = tw_rand_integer(lp->rng, 0, ttl_lps - 1);
+					m->num_rngs++;
+				}
+			}
+			else {
+				dest = lp->gid;
+			}
+			if(dest >= (g_tw_nlp * tw_nnodes()))
+				tw_error(TW_LOC, "bad dest");
+
+			tw_event *e = tw_event_new(dest, offset, lp);
+			eties_message *new_m = tw_event_data(e);
+			bf->c1 = 1;
+			new_m->val = (int) (tw_rand_unif(lp->rng) * 100.0);
+			new_m->offset = offset;
+			m->num_rngs++;
+			new_m->chain_identifier = m->chain_identifier + 1;
+			tw_event_send(e);
+		}
+
+
+
 		// printf("%d: Scheduling event %d:%d for (%.4f,%.4f)\n",lp->gid, lp->pe->id, e->event_id, e->sig.recv_ts, e->sig.event_tiebreaker);
 		// sleep(1);
 	}
@@ -177,19 +207,31 @@ eties_event_handler_rc(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * l
 		// return;
 	}
 
-	if (bf->c1) {
-		tw_rand_reverse_unif(lp->rng); //new val
+	if (bf->c11) {
+		s->received_triggers--;
+		if (bf->c12) {
+			s->received_triggers = g_eties_start_events-1;
+			return;
+		}
 	}
+
+	// if (bf->c1) {
+	// 	tw_rand_reverse_unif(lp->rng); //new val
+	// }
 	if (bf->c2) {
 		s->incasts_completed -= 1;
 		s->next_incast_time = incast_times[s->incasts_completed];
 	}
-	if (bf->c3) {
-		tw_rand_reverse_unif(lp->rng); //remote coin flip
-		if (bf->c4)
-			tw_rand_reverse_unif(lp->rng); //override coin flip
-		if (bf->c5)
-			tw_rand_reverse_unif(lp->rng); //random remote dest
+	// if (bf->c3) {
+	// 	tw_rand_reverse_unif(lp->rng); //remote coin flip
+	// 	if (bf->c4)
+	// 		tw_rand_reverse_unif(lp->rng); //override coin flip
+	// 	if (bf->c5)
+	// 		tw_rand_reverse_unif(lp->rng); //random remote dest
+	// }
+	for(int i = 0; i < m->num_rngs; i++)
+	{
+		tw_rand_reverse_unif(lp->rng);
 	}
 }
 
@@ -272,6 +314,7 @@ const tw_optdef app_opt[] =
 	TWOPT_UINT("timestep-increment", timestep_increment, "timestamp offset between causal and resulting events"),
 	TWOPT_UINT("start-events", g_eties_start_events, "number of initial messages per LP"),
 	TWOPT_UINT("chain-length", g_eties_events_per_start, "total number of messages generated per start event"),
+	TWOPT_UINT("child-events", g_eties_child_events, "total number of parallel messages generated per event"),
 	TWOPT_UINT("memory", optimistic_memory, "additional memory buffers"),
 	TWOPT_CHAR("run", run_id, "user supplied run name"),
 	TWOPT_END()

@@ -16,13 +16,16 @@ struct eties_state
 	unsigned long long running_sum;
 	unsigned int next_incast_time;
 	unsigned int incasts_completed;
+	unsigned int received_triggers;
 };
 
 struct eties_message
 {
 	int chain_identifier; //how many events, including the start event, have been created by the start event
 	int val;
+	int offset;
 	double rc_saved_mean;
+	int num_rngs;
 };
 
 /*
@@ -38,6 +41,7 @@ static unsigned int nlp_per_pe = 8;
 static int timestep_increment = 1;
 static int g_eties_start_events = 1;
 static int g_eties_events_per_start = 1; //how many events are allowed to be created per start event?
+static int g_eties_child_events = 1;
 static int optimistic_memory = 100;
 
 // rate for timestamp exponential distribution
