@@ -16,16 +16,21 @@ struct eties_state
 	unsigned long long running_sum;
 	unsigned int next_incast_time;
 	unsigned int incasts_completed;
-	unsigned int received_triggers;
+	int received;
 };
 
 struct eties_message
 {
 	int chain_identifier; //how many events, including the start event, have been created by the start event
+	int sum_identifier;
 	int val;
 	int offset;
 	double rc_saved_mean;
+	int rc_saved_sum;
 	int num_rngs;
+	int num_rngs2;
+	tw_lpid original_lpid;
+	short is_start;
 };
 
 /*

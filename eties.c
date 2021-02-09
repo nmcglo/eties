@@ -4,6 +4,9 @@
 
 unsigned int nlp_in_other_pes;
 
+int sum = 0;
+int received = 0;
+
 int* incast_times;
 
 tw_peid
@@ -16,11 +19,11 @@ void
 eties_init(eties_state * s, tw_lp * lp)
 {
     (void*)lp;
-	s->cur_rec_mean = tw_rand_unif(lp->rng)*100.0; //give it a random starting value
-	s->running_sum = (int) s->cur_rec_mean;
+	s->cur_rec_mean = tw_rand_unif(&lp->rng[0])*100.0; //give it a random starting value
+	s->running_sum = (int) 0;
 	s->next_incast_time = incast_times[0];
 	s->incasts_completed = 0;
-	s->received_triggers = 0;
+	s->received = 0;
 
 	if (lp->gid < 100)
 		printf("LP %ld: Starting Mean: %.10f\n",lp->gid, s->cur_rec_mean);
@@ -32,10 +35,12 @@ eties_init(eties_state * s, tw_lp * lp)
 		if(dest >= (g_tw_nlp * tw_nnodes()))
 			tw_error(TW_LOC, "bad dest");
 
-		tw_event *e = tw_event_new(dest, 0, lp);	
+		tw_event *e = tw_event_new(dest, 1, lp);	
 		eties_message *new_m = tw_event_data(e);
-		new_m->val = (int) (tw_rand_unif(lp->rng) * 100.0);
+		new_m->val = (int) (tw_rand_unif(&lp->rng[0]) * 100.0);
 		new_m->chain_identifier = 1;
+		new_m->original_lpid = lp->gid;
+		new_m->sum_identifier = i;
 		tw_event_send(e);
 		// printf("%d: Scheduling event %d:%d for (%.4f,%.4f)\n",lp->gid, lp->pe->id, e->event_id, e->sig.recv_ts, e->sig.event_tiebreaker);
 	}
@@ -58,6 +63,37 @@ eties_event_handler(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
     (void) s;
     (void) m;
 	m->num_rngs = 0;
+	m->num_rngs2 = 0;
+	
+	if (m->is_start == 1)
+	{
+		for(int i = 0; i < g_eties_start_events; i++) {
+			tw_lpid dest = lp->gid;
+
+			if(dest >= (g_tw_nlp * tw_nnodes()))
+				tw_error(TW_LOC, "bad dest");
+
+			tw_event *e = tw_event_new(dest, 1, lp);	
+			eties_message *new_m = tw_event_data(e);
+			new_m->val = (int) (tw_rand_unif(&lp->rng[0]) * 100.0);
+			// m->num_rngs++;
+			new_m->chain_identifier = 1;
+			new_m->original_lpid = lp->gid;
+			new_m->sum_identifier = i;
+			tw_event_send(e);
+			// printf("%d: Scheduling event %d:%d for (%.4f,%.4f)\n",lp->gid, lp->pe->id, e->event_id, e->sig.recv_ts, e->sig.event_tiebreaker);
+		}
+		return;
+	}
+	else {
+		s->received+=1;
+		bf->c20 = 1;
+	}
+
+
+
+
+
 	//process the new mean destructively for current LP state
 
 	//this operation is order dependent - so event ordering really matters
@@ -68,51 +104,52 @@ eties_event_handler(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 	// double new_mean = floor((m->val + s->cur_rec_mean) / 2.0);
 
 	m->rc_saved_mean = s->cur_rec_mean;
+	m->rc_saved_sum = s->running_sum;
+	// m->rc_saved_mean = s->cur_rec_mean;
 	s->cur_rec_mean = new_mean;
 	s->running_sum += m->val; //adheres to associative property - should be deterministic on event ties
 
 	//If we have a set number of events to be generated per start event, AND
 	//if we've already generated enough causal events eminating from this event, then don't generate another event
 
-	tw_stime offset;
-	if(g_eties_events_per_start > 0 && m->chain_identifier >= g_eties_events_per_start) {
-		bf->c10 = 1;
-		offset = 1;
-		m->chain_identifier = 0;
-	}
-	else {
-		offset = timestep_increment;
-	}
+	// tw_stime offset;
+	// if(g_eties_events_per_start > 0 && m->chain_identifier >= g_eties_events_per_start) {
+	// 	bf->c10 = 1;
+	// 	offset = 1;
+	// 	m->chain_identifier = 0;
+	// }
+	// else {
+	// 	offset = timestep_increment;
+	// }
 	// printf("offset = %.4f\n",offset);
 
 	//we only want to trigger g_eties_start_events number of children for regular offset events
-	if (m->offset == 1)
-	{
-		bf->c11;
-		s->received_triggers++;
-		if (s->received_triggers == g_eties_start_events) {
-			bf->c12 = 1;
-			s->received_triggers = 0;
-			return;
-		}
-	}
+	// if (m->offset == 1)
+	// {
+	// 	bf->c11;
+	// 	s->received_triggers++;
+	// 	if (s->received_triggers == g_eties_start_events) {
+	// 		bf->c12 = 1;
+	// 		s->received_triggers = 0;
+	// 		return;
+	// 	}
+	// }
 	
 
 
 	//if the event to be created is less than the end time, proceed - otherwise stop generating new events
 	//This is generally fine but if we are testing the tiebreaker RNG rollback count, then new'ing an event
 	//that is never actually sent or processed will cause discrepancies.
-	if (tw_now(lp)+offset < g_tw_ts_end) {
-		tw_lpid	dest;
-		int do_incast = 0;
-		int now = tw_now(lp);
-		if (num_incast > 0 && now+offset == s->next_incast_time) {
-			bf->c2 = 1;
-			dest = 0;
-			do_incast = 1;
-			s->incasts_completed += 1;
-			s->next_incast_time = incast_times[s->incasts_completed];
-		}
+		// tw_lpid	dest;
+		// int do_incast = 0;
+		// int now = tw_now(lp);
+		// if (num_incast > 0 && now+offset == s->next_incast_time) {
+		// 	bf->c2 = 1;
+		// 	dest = 0;
+		// 	do_incast = 1;
+		// 	s->incasts_completed += 1;
+		// 	s->next_incast_time = incast_times[s->incasts_completed];
+		// }
 
 		// dest = (lp->gid +1)%ttl_lps;
 
@@ -152,38 +189,52 @@ eties_event_handler(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 		// 	}
 		// }
 
-		int num_child_events = 1;
-		if (offset == 0)
-			num_child_events = g_eties_child_events;
-
-		for(int i = 0; i <  num_child_events; i++)
-		{
-			bf->c3 = 1;
-			m->num_rngs++;
-			if (tw_rand_unif(lp->rng) <= percent_remote) {
-				bf->c4 = 1;
-				m->num_rngs++;
-				if (tw_rand_unif(lp->rng) <= percent_override)
-					dest = (lp->gid + (int)s->cur_rec_mean)%ttl_lps;
-				else {
-					bf->c5 = 1;
-					dest = tw_rand_integer(lp->rng, 0, ttl_lps - 1);
-					m->num_rngs++;
+		// int num_child_events = 1;
+		// if (offset == 0)
+		// 	num_child_events = g_eties_child_events;
+	if (tw_now(lp)+1 < g_tw_ts_end) {
+		if (m->chain_identifier < g_eties_events_per_start && m->chain_identifier > 0) {
+			for(int i = 0; i <  g_eties_child_events; i++)
+			{
+				tw_lpid dest;
+				bf->c3 = 1;
+				m->num_rngs2++;
+				if (tw_rand_unif(&lp->rng[1]) <= percent_remote) {
+					bf->c4 = 1;
+					m->num_rngs2++;
+					if (tw_rand_unif(&lp->rng[1]) <= percent_override)
+						dest = (lp->gid + (int)s->cur_rec_mean)%ttl_lps;
+					else {
+						bf->c5 = 1;
+						dest = tw_rand_integer(&lp->rng[1], 0, ttl_lps - 1);
+						m->num_rngs2++;
+					}
 				}
-			}
-			else {
-				dest = lp->gid;
-			}
-			if(dest >= (g_tw_nlp * tw_nnodes()))
-				tw_error(TW_LOC, "bad dest");
+				else {
+					dest = lp->gid;
+				}
+				// tw_lpid dest = (lp->gid + (ttl_lps/2))%ttl_lps;
+				if(dest >= (g_tw_nlp * tw_nnodes()))
+					tw_error(TW_LOC, "bad dest");
 
-			tw_event *e = tw_event_new(dest, offset, lp);
+				tw_event *e = tw_event_new(dest, 0, lp);
+				eties_message *new_m = tw_event_data(e);
+				bf->c1 = 1;
+				new_m->val = tw_rand_integer(&lp->rng[2],0,100);
+				// new_m->offset = offset;
+				m->num_rngs++;
+				new_m->chain_identifier = m->chain_identifier + 1;
+				new_m->sum_identifier = m->sum_identifier + i;
+				new_m->original_lpid = m->original_lpid;
+				tw_event_send(e);
+			}
+		}
+		else if (m->sum_identifier == 0)
+		{
+			tw_event *e = tw_event_new(m->original_lpid, 0, lp);
 			eties_message *new_m = tw_event_data(e);
-			bf->c1 = 1;
-			new_m->val = (int) (tw_rand_unif(lp->rng) * 100.0);
-			new_m->offset = offset;
-			m->num_rngs++;
-			new_m->chain_identifier = m->chain_identifier + 1;
+			new_m->val=0;
+			new_m->is_start = 1;
 			tw_event_send(e);
 		}
 
@@ -198,30 +249,52 @@ eties_event_handler(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 void
 eties_event_handler_rc(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 {
-	// printf("%d: reverse! (%.4f, %.4f)\n",lp->gid, tw_now_sig(lp).recv_ts, tw_now_sig(lp).event_tiebreaker );
+
+	for(int i = 0; i < m->num_rngs; i++)
+	{
+		tw_rand_reverse_unif(&lp->rng[2]);
+	}
+	for(int i = 0; i < m->num_rngs2; i++)
+	{
+		tw_rand_reverse_unif(&lp->rng[1]);
+	}
+	m->num_rngs = 0;
+	m->num_rngs2 = 0;
+
+	if (m->is_start == 1)
+	{
+		for(int i = 0; i < g_eties_start_events; i++)
+			tw_rand_reverse_unif(&lp->rng[0]);
+		return;
+	}
+	s->received--;
+
 	s->cur_rec_mean = m->rc_saved_mean; //Saved state is safer when dealing with floats
-	s->running_sum -=m->val; //The running sum is meant to be a verification. Still working with floats but not looking with enough precision to matter
+	s->running_sum = m->rc_saved_sum; //The running sum is meant to be a verification. Still working with floats but not looking with enough precision to matter
 
-	if (bf->c10) {
-		m->chain_identifier = g_eties_events_per_start;
-		// return;
-	}
 
-	if (bf->c11) {
-		s->received_triggers--;
-		if (bf->c12) {
-			s->received_triggers = g_eties_start_events-1;
-			return;
-		}
-	}
+	// printf("%d: reverse! (%.4f, %.4f)\n",lp->gid, tw_now_sig(lp).recv_ts, tw_now_sig(lp).event_tiebreaker );
+
+	// if (bf->c10) {
+	// 	m->chain_identifier = g_eties_events_per_start;
+	// 	// return;
+	// }
+
+	// if (bf->c11) {
+	// 	s->received_triggers--;
+	// 	if (bf->c12) {
+	// 		s->received_triggers = g_eties_start_events-1;
+	// 		return;
+	// 	}
+	// }
 
 	// if (bf->c1) {
 	// 	tw_rand_reverse_unif(lp->rng); //new val
 	// }
-	if (bf->c2) {
-		s->incasts_completed -= 1;
-		s->next_incast_time = incast_times[s->incasts_completed];
-	}
+	// if (bf->c2) {
+	// 	s->incasts_completed -= 1;
+	// 	s->next_incast_time = incast_times[s->incasts_completed];
+	// }
 	// if (bf->c3) {
 	// 	tw_rand_reverse_unif(lp->rng); //remote coin flip
 	// 	if (bf->c4)
@@ -229,10 +302,7 @@ eties_event_handler_rc(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * l
 	// 	if (bf->c5)
 	// 		tw_rand_reverse_unif(lp->rng); //random remote dest
 	// }
-	for(int i = 0; i < m->num_rngs; i++)
-	{
-		tw_rand_reverse_unif(lp->rng);
-	}
+
 }
 
 void eties_commit(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
@@ -246,9 +316,11 @@ void eties_commit(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 void
 eties_finish(eties_state * s, tw_lp * lp)
 {
+	sum += s->running_sum;
+	received += s->received;
 	//If the running mean and the runnng sum are both consistent between separate runs, the model is deterministic
 	if (lp->gid < 100)
-		printf("LP %ld:  Final Running Mean %.10f    Running Sum %lld\n",lp->gid, s->cur_rec_mean, s->running_sum);
+		printf("LP %ld:  Final Running Mean %.10f    Running Sum %lld   Received %d\n",lp->gid, s->cur_rec_mean, s->running_sum, s->received);
 
 	//Verify the core tiebreaking RNG - in optimistic debug, this value should equal that of post-init
 #ifdef USE_RAND_TIEBREAKER
@@ -342,6 +414,8 @@ main(int argc, char **argv)
 
 	unsigned int i;
 
+	g_tw_nRNG_per_lp = 3;
+
 	// set a min lookahead of 1.0
 	lookahead = 1.0;
 	tw_opt_add(app_opt);
@@ -396,6 +470,17 @@ main(int argc, char **argv)
 #ifdef USE_DAMARIS
     } // end if(g_st_ross_rank)
 #endif
+
+	int total_received;
+	int total_sum;
+    MPI_Reduce(&received, &total_received, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_ROSS);
+    MPI_Reduce(&sum, &total_sum, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_ROSS);
+	if (g_tw_mynode == 0)
+	{
+		printf("Total Meaningful Events %d\n", total_received);
+		printf("Total Sum %d\n",total_sum);
+	}
+
 	tw_end();
 
 	return 0;
