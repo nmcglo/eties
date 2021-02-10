@@ -35,12 +35,13 @@ eties_init(eties_state * s, tw_lp * lp)
 		if(dest >= (g_tw_nlp * tw_nnodes()))
 			tw_error(TW_LOC, "bad dest");
 
-		tw_event *e = tw_event_new(dest, 1, lp);	
+		tw_event *e = tw_event_new(dest, 0, lp);	
 		eties_message *new_m = tw_event_data(e);
 		new_m->val = (int) (tw_rand_unif(&lp->rng[0]) * 100.0);
 		new_m->chain_identifier = 1;
 		new_m->original_lpid = lp->gid;
 		new_m->sum_identifier = i;
+		new_m->is_start = 0;
 		tw_event_send(e);
 		// printf("%d: Scheduling event %d:%d for (%.4f,%.4f)\n",lp->gid, lp->pe->id, e->event_id, e->sig.recv_ts, e->sig.event_tiebreaker);
 	}
@@ -73,13 +74,14 @@ eties_event_handler(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 			if(dest >= (g_tw_nlp * tw_nnodes()))
 				tw_error(TW_LOC, "bad dest");
 
-			tw_event *e = tw_event_new(dest, 1, lp);	
+			tw_event *e = tw_event_new(dest, 0, lp);	
 			eties_message *new_m = tw_event_data(e);
 			new_m->val = (int) (tw_rand_unif(&lp->rng[0]) * 100.0);
 			// m->num_rngs++;
 			new_m->chain_identifier = 1;
 			new_m->original_lpid = lp->gid;
 			new_m->sum_identifier = i;
+			new_m->is_start = 0;
 			tw_event_send(e);
 			// printf("%d: Scheduling event %d:%d for (%.4f,%.4f)\n",lp->gid, lp->pe->id, e->event_id, e->sig.recv_ts, e->sig.event_tiebreaker);
 		}
@@ -226,12 +228,13 @@ eties_event_handler(eties_state * s, tw_bf * bf, eties_message * m, tw_lp * lp)
 				new_m->chain_identifier = m->chain_identifier + 1;
 				new_m->sum_identifier = m->sum_identifier + i;
 				new_m->original_lpid = m->original_lpid;
+				new_m->is_start = 0;
 				tw_event_send(e);
 			}
 		}
 		else if (m->sum_identifier == 0)
 		{
-			tw_event *e = tw_event_new(m->original_lpid, 0, lp);
+			tw_event *e = tw_event_new(m->original_lpid, 1, lp);
 			eties_message *new_m = tw_event_data(e);
 			new_m->val=0;
 			new_m->is_start = 1;
