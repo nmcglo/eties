@@ -1,6 +1,6 @@
 #include "eties.h"
 
-#define DEBUG_RAND_TIEBREAKER 0
+#define DEBUG_RAND_TIEBREAKER 1
 
 unsigned int nlp_in_other_pes;
 
@@ -20,7 +20,7 @@ eties_init(eties_state * s, tw_lp * lp)
 {
     (void*)lp;
 	s->cur_rec_mean = tw_rand_unif(&lp->rng[0])*100.0; //give it a random starting value
-	s->running_sum = (int) 0;
+	s->running_sum = (int) s->cur_rec_mean;
 	s->next_incast_time = incast_times[0];
 	s->incasts_completed = 0;
 	s->received = 0;
@@ -35,7 +35,7 @@ eties_init(eties_state * s, tw_lp * lp)
 		if(dest >= (g_tw_nlp * tw_nnodes()))
 			tw_error(TW_LOC, "bad dest");
 
-		tw_event *e = tw_event_new(dest, 0, lp);	
+		tw_event *e = tw_event_new(dest, 1, lp);	
 		eties_message *new_m = tw_event_data(e);
 		new_m->val = (int) (tw_rand_unif(&lp->rng[0]) * 100.0);
 		new_m->chain_identifier = 1;
@@ -51,6 +51,7 @@ eties_init(eties_state * s, tw_lp * lp)
 #ifdef USE_RAND_TIEBREAKER
 	if (DEBUG_RAND_TIEBREAKER) {
 		// tw_stime val = tw_rand_unif(lp->core_rng);
+		printf("%ld: core rng seeds %d %d %d %d\n",lp->gid, lp->core_rng->Ig[0], lp->core_rng->Ig[1], lp->core_rng->Ig[2], lp->core_rng->Ig[3]);
 		printf("%ld: Post-Init Core RNG Count: %ld\n", lp->gid, lp->core_rng->count); //should equal --start-events
 		// printf("%ld: Post-Init Core Random Value %.5f\n", lp->gid, val);
 	}
